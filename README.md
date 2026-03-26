@@ -9,6 +9,11 @@
   <p>
     <a href="https://www.npmjs.com/package/openlayers-mcp-runtime"><img src="https://img.shields.io/npm/v/openlayers-mcp-runtime.svg" alt="npm version"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+    <a href="https://github.com/gaopengbin/openlayers-mcp"><img src="https://img.shields.io/github/stars/gaopengbin/openlayers-mcp?style=flat" alt="GitHub stars"></a>
+  </p>
+
+  <p>
+    <a href="README.zh-CN.md">中文文档</a>
   </p>
 </div>
 
@@ -94,6 +99,17 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
 ```
 
 Now ask your AI: *"Show a map of Paris and add a polygon around the Louvre"*
+
+## Usage Examples
+
+Ask your AI agent natural language questions like:
+
+- "Fly to Tokyo at zoom level 12"
+- "Add a vector layer from this GeoJSON URL"
+- "Draw a polygon on the map, then export it as GeoJSON"
+- "Set the layer opacity to 50%"
+- "Add a marker at the Eiffel Tower with a popup label"
+- "Take a screenshot of the current map view"
 
 ## 30+ Available Tools
 
