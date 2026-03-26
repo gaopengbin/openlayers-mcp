@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenLayers MCP — Minimal Demo</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.5.0/ol.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #eee; }
+    #map { width: 100vw; height: 100vh; }
+    #status {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      background: rgba(0,0,0,0.7); padding: 8px 16px; border-radius: 8px;
+      font-size: 13px; display: flex; align-items: center; gap: 8px;
+    }
+    #status .dot { width: 8px; height: 8px; border-radius: 50%; }
+    #status .dot.connected { background: #22c55e; }
+    #status .dot.disconnected { background: #ef4444; }
+    .ol-mcp-overlay {
+      background: white; color: #333; padding: 8px 12px; border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 13px; max-width: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="status">
+    <span class="dot disconnected" id="statusDot"></span>
+    <span id="statusText">Connecting...</span>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ol@10.5.0/dist/ol.js"></script>
+  <script>
+    // Initialize OpenLayers map
+    const map = new ol.Map({
+      target: 'map',
+      layers: [
+        new ol.layer.Tile({ source: new ol.source.OSM() })
+      ],
+      view: new ol.View({
+        center: ol.proj.fromLonLat([0, 20]),
+        zoom: 3
+      })
+    });
+
+    // ==================== Bridge (inline, for demo) ====================
+
+    const WS_URL = 'ws://localhost:9300';
+    let ws = null;
+    let reconnectTimer = null;
+    let drawInteraction = null;
+    let drawLayer = null;
+    let idCounter = 0;
+
+    function genId(prefix) { return `${prefix}_${++idCounter}_${Date.now().toString(36)}`; }
+
+    function setStatus(connected) {
+      document.getElementById('statusDot').className = `dot ${connected ? 'connected' : 'disconnected'}`;
+      document.getElementById('statusText').textContent = connected ? 'Connected to MCP Runtime' : 'Disconnected';
+    }
+
+    function findLayer(id) {
+      return map.getLayers().getArray().find(l => l.get('id') === id);
+    }
+
+    function getOrCreateDefaultLayer() {
+      let layer = findLayer('__default_features__');
+      if (!layer) {
+        const source = new ol.source.Vector();
+        layer = new ol.layer.Vector({ source });
+        layer.set('id', '__default_features__');
+        layer.set('name', 'Features');
+        map.addLayer(layer);
+      }
+      return layer;
+    }
+
+    function getVectorLayer(layerId) {
+      if (layerId) {
+        const layer = findLayer(layerId);
+        if (layer && layer instanceof ol.layer.Vector) return layer;
+        throw new Error(`Vector layer not found: ${layerId}`);
+      }
+      return getOrCreateDefaultLayer();
+    }
+
+    function buildStyle(p) {
+      if (!p) return undefined;
+      function withAlpha(color, alpha) {
+        if (color && color.startsWith('#') && color.length === 7) {
+          return color + Math.round((alpha ?? 1) * 255).toString(16).padStart(2, '0');
+        }
+        return color;
+      }
+      return new ol.style.Style({
+        fill: (p.fillColor || p.fillOpacity != null) ? new ol.style.Fill({
+          color: withAlpha(p.fillColor || '#3B82F6', p.fillOpacity ?? 0.4),
+        }) : undefined,
+        stroke: (p.strokeColor || p.strokeWidth) ? new ol.style.Stroke({
+          color: p.strokeColor || '#3B82F6',
+          width: p.strokeWidth || 2,
+        }) : undefined,
+        image: p.pointRadius || p.pointColor ? new ol.style.Circle({
+          radius: p.pointRadius || 6,
+          fill: new ol.style.Fill({ color: p.pointColor || '#3B82F6' }),
+          stroke: new ol.style.Stroke({ color: '#fff', width: 2 }),
+        }) : p.iconUrl ? new ol.style.Icon({ src: p.iconUrl, scale: p.iconScale || 1 }) : undefined,
+        text: p.text ? new ol.style.Text({
+          text: p.text,
+          font: p.textFont || '14px sans-serif',
+          fill: new ol.style.Fill({ color: p.textFillColor || '#333' }),
+          offsetY: p.textOffsetY || -20,
+        }) : undefined,
+      });
+    }
+
+    // Command handlers
+    const handlers = {
+      // View
+      flyTo(p) {
+        map.getView().animate({
+          center: ol.proj.fromLonLat([p.longitude, p.latitude]),
+          zoom: p.zoom ?? map.getView().getZoom() ?? 10,
+          duration: p.duration ?? 2000,
+        });
+        return handlers.getView();
+      },
+      setView(p) {
+        map.getView().setCenter(ol.proj.fromLonLat([p.longitude, p.latitude]));
+        if (p.zoom != null) map.getView().setZoom(p.zoom);
+        if (p.rotation != null) map.getView().setRotation(p.rotation);
+        return handlers.getView();
+      },
+      getView() {
+        const center = ol.proj.toLonLat(map.getView().getCenter() || [0, 0]);
+        const ext = map.getView().calculateExtent(map.getSize());
+        const lonLatExt = ol.proj.transformExtent(ext, map.getView().getProjection(), 'EPSG:4326');
+        return { center, zoom: map.getView().getZoom(), rotation: map.getView().getRotation(), extent: lonLatExt };
+      },
+      fitExtent(p) {
+        const ext = ol.proj.transformExtent([p.west, p.south, p.east, p.north], 'EPSG:4326', map.getView().getProjection());
+        map.getView().fit(ext, { duration: p.duration ?? 1000, maxZoom: p.maxZoom });
+        return handlers.getView();
+      },
+      zoomIn() {
+        map.getView().animate({ zoom: (map.getView().getZoom() || 2) + 1, duration: 300 });
+        return handlers.getView();
+      },
+      zoomOut() {
+        map.getView().animate({ zoom: (map.getView().getZoom() || 2) - 1, duration: 300 });
+        return handlers.getView();
+      },
+
+      // Layer
+      addTileLayer(p) {
+        const id = p.id || genId('tile');
+        let source;
+        switch (p.type) {
+          case 'osm': source = new ol.source.OSM(); break;
+          case 'xyz': source = new ol.source.XYZ({ url: p.url }); break;
+          default: source = new ol.source.OSM();
+        }
+        const layer = new ol.layer.Tile({ source, visible: p.visible ?? true, opacity: p.opacity ?? 1 });
+        layer.set('id', id);
+        layer.set('name', p.name || id);
+        map.addLayer(layer);
+        return { layerId: id };
+      },
+      addVectorLayer(p) {
+        const id = p.id || genId('vec');
+        const source = new ol.source.Vector();
+        if (p.data) {
+          const features = new ol.format.GeoJSON().readFeatures(p.data, { featureProjection: map.getView().getProjection() });
+          source.addFeatures(features);
+        }
+        const layer = new ol.layer.Vector({ source, style: buildStyle(p.style) });
+        layer.set('id', id);
+        layer.set('name', p.name || id);
+        map.addLayer(layer);
+        return { layerId: id };
+      },
+      removeLayer(p) {
+        const layer = findLayer(p.id);
+        if (!layer) return false;
+        map.removeLayer(layer);
+        return true;
+      },
+      listLayers() {
+        return map.getLayers().getArray().map((l, i) => ({
+          id: l.get('id') || `layer_${i}`,
+          name: l.get('name') || '',
+          type: l instanceof ol.layer.Vector ? 'vector' : l instanceof ol.layer.Tile ? 'tile' : 'unknown',
+          visible: l.getVisible(),
+          opacity: l.getOpacity(),
+          zIndex: l.getZIndex() ?? i,
+        }));
+      },
+      setLayerVisibility(p) { const l = findLayer(p.id); if (!l) return false; l.setVisible(p.visible); return true; },
+      setLayerOpacity(p) { const l = findLayer(p.id); if (!l) return false; l.setOpacity(p.opacity); return true; },
+      setLayerZIndex(p) { const l = findLayer(p.id); if (!l) return false; l.setZIndex(p.zIndex); return true; },
+
+      // Feature
+      addFeature(p) {
+        const id = p.id || genId('feat');
+        let geom;
+        switch (p.type) {
+          case 'Point': geom = new ol.geom.Point(ol.proj.fromLonLat(p.coordinates)); break;
+          case 'LineString': geom = new ol.geom.LineString(p.coordinates.map(c => ol.proj.fromLonLat(c))); break;
+          case 'Polygon': geom = new ol.geom.Polygon(p.coordinates.map(ring => ring.map(c => ol.proj.fromLonLat(c)))); break;
+          case 'Circle': geom = new ol.geom.Circle(ol.proj.fromLonLat(p.coordinates), p.radius || 1000); break;
+          default: throw new Error('Unsupported type: ' + p.type);
+        }
+        const feature = new ol.Feature({ geometry: geom, ...(p.properties || {}) });
+        feature.setId(id);
+        if (p.style) feature.setStyle(buildStyle(p.style));
+        getVectorLayer(p.layerId).getSource().addFeature(feature);
+        return { featureId: id };
+      },
+      addGeoJSON(p) {
+        const layer = getVectorLayer(p.layerId);
+        const features = new ol.format.GeoJSON().readFeatures(p.data, { featureProjection: map.getView().getProjection() });
+        if (p.style) { const s = buildStyle(p.style); features.forEach(f => f.setStyle(s)); }
+        layer.getSource().addFeatures(features);
+        return { layerId: layer.get('id'), featureCount: features.length };
+      },
+      removeFeature(p) {
+        const layer = getVectorLayer(p.layerId);
+        const f = layer.getSource().getFeatureById(p.featureId);
+        if (!f) return false;
+        layer.getSource().removeFeature(f);
+        return true;
+      },
+      updateFeature(p) {
+        const f = getVectorLayer(p.layerId).getSource().getFeatureById(p.featureId);
+        if (!f) return false;
+        if (p.properties) Object.entries(p.properties).forEach(([k,v]) => f.set(k,v));
+        if (p.style) f.setStyle(buildStyle(p.style));
+        return true;
+      },
+      listFeatures(p) {
+        return getVectorLayer(p?.layerId).getSource().getFeatures().map(f => ({
+          id: f.getId() ?? '', type: f.getGeometry()?.getType() ?? 'unknown',
+        }));
+      },
+
+      // Overlay
+      addOverlay(p) {
+        const id = p.id || genId('overlay');
+        const el = document.createElement('div');
+        el.innerHTML = p.html;
+        el.className = 'ol-mcp-overlay';
+        map.addOverlay(new ol.Overlay({ id, element: el, position: ol.proj.fromLonLat([p.longitude, p.latitude]), positioning: p.positioning || 'bottom-center' }));
+        return { overlayId: id };
+      },
+      removeOverlay(p) { const o = map.getOverlayById(p.id); if (!o) return false; map.removeOverlay(o); return true; },
+      updateOverlay(p) {
+        const o = map.getOverlayById(p.id); if (!o) return false;
+        if (p.longitude != null && p.latitude != null) o.setPosition(ol.proj.fromLonLat([p.longitude, p.latitude]));
+        if (p.html != null && o.getElement()) o.getElement().innerHTML = p.html;
+        return true;
+      },
+      listOverlays() { return map.getOverlays().getArray().map(o => ({ id: String(o.getId() || ''), position: o.getPosition() ? ol.proj.toLonLat(o.getPosition()) : null })); },
+
+      // Interaction
+      screenshot() {
+        const canvas = map.getViewport().querySelector('canvas');
+        if (!canvas) throw new Error('No canvas');
+        return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
+      },
+      getFeatureAtPixel(p) {
+        let result = null;
+        map.forEachFeatureAtPixel([p.x, p.y], (f) => {
+          if (!result) result = { featureId: f.getId() ?? '', properties: f.getProperties() };
+        }, p.layerId ? { layerFilter: l => l.get('id') === p.layerId } : undefined);
+        return result;
+      },
+
+      // Style
+      setFeatureStyle(p) {
+        const f = getVectorLayer(p.layerId).getSource().getFeatureById(p.featureId);
+        if (!f) return false;
+        f.setStyle(buildStyle(p.style));
+        return true;
+      },
+      setLayerStyle(p) {
+        const l = findLayer(p.layerId);
+        if (!l || !(l instanceof ol.layer.Vector)) return false;
+        l.setStyle(buildStyle(p.style));
+        return true;
+      },
+
+      // Draw
+      enableDraw(p) {
+        handlers.disableDraw();
+        if (!drawLayer) {
+          drawLayer = new ol.layer.Vector({ source: new ol.source.Vector() });
+          drawLayer.set('id', '__draw__');
+          map.addLayer(drawLayer);
+        }
+        drawInteraction = new ol.interaction.Draw({ source: drawLayer.getSource(), type: p.type, freehand: p.freehand ?? false });
+        map.addInteraction(drawInteraction);
+        return true;
+      },
+      disableDraw() {
+        if (drawInteraction) { map.removeInteraction(drawInteraction); drawInteraction = null; }
+        return true;
+      },
+      getDrawnFeatures() {
+        if (!drawLayer) return { featureCount: 0, geojson: { type: 'FeatureCollection', features: [] } };
+        const features = drawLayer.getSource().getFeatures();
+        const geojson = JSON.parse(new ol.format.GeoJSON().writeFeatures(features, { featureProjection: map.getView().getProjection() }));
+        return { featureCount: features.length, geojson };
+      },
+    };
+
+    // WebSocket connection
+    function connectWS() {
+      ws = new WebSocket(WS_URL);
+      ws.onopen = () => {
+        setStatus(true);
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.method && handlers[msg.method]) {
+            try {
+              const result = handlers[msg.method](msg.params || {});
+              if (msg.id) ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+            } catch (err) {
+              if (msg.id) ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -1, message: err.message } }));
+            }
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        setStatus(false);
+        reconnectTimer = setTimeout(connectWS, 3000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "openlayers-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered OpenLayers map control via Model Context Protocol (MCP)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "clean": "rimraf packages/*/dist",
+    "dev": "npm run dev --workspace=packages/openlayers-mcp-runtime"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "typescript": "^5.3.0"
+  },
+  "license": "MIT"
+}

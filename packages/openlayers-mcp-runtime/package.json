@@ -1,0 +1,43 @@
+{
+  "name": "openlayers-mcp-runtime",
+  "version": "0.1.0",
+  "description": "MCP Server for OpenLayers — AI agents control maps via stdio + WebSocket",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "openlayers-mcp-runtime": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "keywords": [
+    "openlayers",
+    "mcp",
+    "ai",
+    "map",
+    "model-context-protocol"
+  ],
+  "license": "MIT"
+}
