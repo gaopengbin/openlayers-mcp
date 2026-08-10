@@ -149,6 +149,10 @@ bridge.connect('ws://localhost:9300')
 - [cesium-mcp](https://github.com/gaopengbin/cesium-mcp) — AI 控制 CesiumJS 3D 地球
 - [mapbox-mcp](https://github.com/gaopengbin/mapbox-mcp) — AI 控制 Mapbox GL JS
 
+## Star 趋势
+
+[![Star History Chart](https://raw.githubusercontent.com/gaopengbin/openlayers-mcp/star-history-data/.github/star-history/chart.svg)](https://github.com/gaopengbin/openlayers-mcp)
+
 ## 许可证
 
 MIT
