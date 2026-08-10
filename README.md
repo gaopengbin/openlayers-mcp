@@ -151,6 +151,10 @@ Tools are organized into **7 toolsets**. Default mode enables 4 core toolsets. U
 - [cesium-mcp](https://github.com/gaopengbin/cesium-mcp) — AI control for CesiumJS 3D globe
 - [mapbox-mcp](https://github.com/gaopengbin/mapbox-mcp) — AI control for Mapbox GL JS
 
+## Star History
+
+[![Star History Chart](https://raw.githubusercontent.com/gaopengbin/openlayers-mcp/star-history-data/.github/star-history/chart.svg)](https://github.com/gaopengbin/openlayers-mcp)
+
 ## License
 
 MIT
